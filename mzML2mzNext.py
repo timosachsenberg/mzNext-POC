@@ -28,6 +28,8 @@ print(f"Load experiment from mzML: {end_time - start_time} seconds")
 
 
 def fillMetaDate(exp):
+    start_time = time.time()
+
     metadata = {}
 
     # Instrument metadata
@@ -357,12 +359,12 @@ def fillMetaDate(exp):
 
     # Convert metadata to JSON
     json_str = json.dumps(metadata, indent=2)
+
+    end_time = time.time()
+    print(f"Create json representaiton of meta data: {end_time - start_time} seconds")
+
     return json_str
 
-start_time = time.time()
-json_str = fillMetaDate(exp)
-end_time = time.time()
-print(f"Create json representaiton of meta data: {end_time - start_time} seconds")
 
 
 def writeSingleParquet(json_str):
@@ -459,6 +461,109 @@ def writeSingleParquet(json_str):
     end_time = time.time()
     print(f"Writing parquet file: {end_time - start_time} seconds")
 
+    start_time = time.time()
+    combined_table = pd.read_parquet(f"{args.output_file}.parquet", engine='pyarrow')
+    end_time = time.time()
+    print(f"Loading parquet file: {end_time - start_time} seconds")
 
-# write out all chromatograms and spectra data
+def benchmarkSingleParquet():
+    import numpy as np
+    import pyarrow.dataset as ds
+
+    # Use the Parquet dataset
+    dataset = ds.dataset(f"{args.output_file}.parquet", format="parquet")
+
+    # Function to collect unique IDs without loading entire column into memory
+    def get_unique_ids(filtered_dataset):
+        unique_ids = set()
+        # Read 'id' column in batches
+        for batch in filtered_dataset.to_batches(columns=['id']):
+            ids_in_batch = batch.column('id').to_pylist()
+            unique_ids.update(ids_in_batch)
+        return list(unique_ids)
+
+    # Collect unique IDs for all spectra
+    spectra_dataset = dataset.filter(ds.field('data_type') == 'spectrum')
+    unique_ids_list = get_unique_ids(spectra_dataset)
+    num_spectra = len(unique_ids_list)
+
+    # Collect unique IDs for MS1 spectra
+    ms1_dataset = spectra_dataset.filter(ds.field('ms_level') == 1)
+    ms1_ids_list = get_unique_ids(ms1_dataset)
+    num_ms1_spectra = len(ms1_ids_list)
+
+    # Collect unique IDs for MS2 spectra
+    ms2_dataset = spectra_dataset.filter(ds.field('ms_level') == 2)
+    ms2_ids_list = get_unique_ids(ms2_dataset)
+    num_ms2_spectra = len(ms2_ids_list)
+
+    # First Task: Access 100 random spectra from parquet using lazy loading
+    start_time = time.time()
+
+    if num_spectra >= 100:
+        random_ids = np.random.choice(unique_ids_list, 100, replace=False)
+
+        # Filter the dataset to include only these IDs
+        filter_expr = ds.field('id').isin(random_ids)
+        selected_dataset = spectra_dataset.filter(filter_expr)
+
+        # Read the data
+        selected_table = selected_dataset.to_table()
+    else:
+        print("Not enough spectra to perform the benchmark.")
+    end_time = time.time()
+    print(f"Accessing 100 random spectra from parquet (lazy loading): {end_time - start_time} seconds")
+
+    # Second Task: Extract 100 random m/z ranges from MS1 spectra in parquet using lazy loading
+    start_time = time.time()
+
+    if num_ms1_spectra >= 100:
+        mz_range_size = 1.0
+        random_ids = np.random.choice(ms1_ids_list, 100, replace=True)
+
+        # For each random ID, get the spectrum data and extract m/z range
+        selected_mz_values = []
+        for spectrum_id in random_ids:
+            # Filter dataset for this spectrum ID
+            spectrum_data = ms1_dataset.filter(ds.field('id') == spectrum_id).to_table(columns=['mz'])
+            mz_values = spectrum_data.column('mz').to_numpy()
+            if len(mz_values) == 0:
+                continue  # Skip if no data
+            min_mz = np.random.uniform(low=mz_values.min(), high=mz_values.max() - mz_range_size)
+            max_mz = min_mz + mz_range_size
+            mz_mask = (mz_values >= min_mz) & (mz_values <= max_mz)
+            selected_peaks = mz_values[mz_mask]
+            selected_mz_values.append(selected_peaks)
+    else:
+        print("Not enough MS1 spectra to perform the benchmark.")
+    end_time = time.time()
+    print(f"Extracting 100 random m/z ranges from MS1 spectra in parquet (lazy loading): {end_time - start_time} seconds")
+
+    # Third Task: Extract 100 random m/z ranges from MS2 spectra in parquet using lazy loading
+    start_time = time.time()
+
+    if num_ms2_spectra >= 100:
+        mz_range_size = 1.0
+        random_ids = np.random.choice(ms2_ids_list, 100, replace=True)
+
+        # For each random ID, get the spectrum data and extract m/z range
+        selected_mz_values = []
+        for spectrum_id in random_ids:
+            # Filter dataset for this spectrum ID
+            spectrum_data = ms2_dataset.filter(ds.field('id') == spectrum_id).to_table(columns=['mz'])
+            mz_values = spectrum_data.column('mz').to_numpy()
+            if len(mz_values) == 0:
+                continue  # Skip if no data
+            min_mz = np.random.uniform(low=mz_values.min(), high=mz_values.max() - mz_range_size)
+            max_mz = min_mz + mz_range_size
+            mz_mask = (mz_values >= min_mz) & (mz_values <= max_mz)
+            selected_peaks = mz_values[mz_mask]
+            selected_mz_values.append(selected_peaks)
+    else:
+        print("Not enough MS2 spectra to perform the benchmark.")
+    end_time = time.time()
+    print(f"Extracting 100 random m/z ranges from MS2 spectra in parquet (lazy loading): {end_time - start_time} seconds")
+
+json_str = fillMetaDate(exp)
 writeSingleParquet(json_str)
+benchmarkSingleParquet()
