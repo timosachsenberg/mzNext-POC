@@ -1,5 +1,6 @@
 import json
 import argparse
+import time
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -18,8 +19,12 @@ parser.add_argument('-o', '--output_file', default='metadata.json', help='Output
 args = parser.parse_args()
 
 # Load the mzML file
+start_time = time.time()
 exp = MSExperiment()
 MzMLFile().load(args.input_file, exp)  # Use filename from command line argument
+end_time = time.time()
+print(f"Load experiment from mzML: {end_time - start_time} seconds")
+
 
 def fillMetaDate(exp):
     metadata = {}
@@ -284,19 +289,20 @@ def fillMetaDate(exp):
 
     # Spectra metadata
     spectra_meta = []
-    for spectrum in exp.getSpectra():
+    for spectrum_index, spectrum in enumerate(exp.getSpectra()):
         spectrum_keys = []
         spectrum.getKeys(spectrum_keys)
         spectrum_meta_values = {key.decode('utf-8'): spectrum.getMetaValue(key) for key in spectrum_keys}
 
         # Precursors
         precursors = []
-        for precursor in spectrum.getPrecursors():
+        for precursor in spectrum.getPrecursors(): # should be zero or one
             precursor_keys = []
             precursor.getKeys(precursor_keys)
             precursor_meta_values = {key.decode('utf-8'): precursor.getMetaValue(key) for key in precursor_keys}
+            precursor_index = exp.getPrecursorSpectrum(spectrum_index)
             precursor_meta = {
-                'rt': precursor.getRT(),
+                'rt': exp[precursor_index].getRT(),
                 'mz': precursor.getMZ(),
                 'charge': precursor.getCharge(),
                 'intensity': precursor.getIntensity(),
@@ -352,7 +358,11 @@ def fillMetaDate(exp):
     json_str = json.dumps(metadata, indent=2)
     return json_str
 
+start_time = time.time()
 json_str = fillMetaDate(exp)
+end_time = time.time()
+print(f"Create json representaiton of meta data: {end_time - start_time} seconds")
+
 
 def writeSingleParquet(json_str):
     # Create a list to hold spectrum data for the DataFrame
@@ -397,12 +407,12 @@ def writeSingleParquet(json_str):
         precursor = chromatogram.getPrecursor()
         product = chromatogram.getProduct()
         
-        for time, intensity in zip(time_array, intensity_array):
+        for rt, intensity in zip(time_array, intensity_array):
             spectra_data.append({
                 'id': chrom_id,
                 'data_type': 'chromatogram',  # Distinguish chromatogram data
                 'ms_level': None,  # Chromatograms don't have MS level
-                'rt': time,
+                'rt': rt,
                 'mz': product.getMZ(),
                 'intensity': intensity,
                 'ion_mobility': None,
@@ -436,11 +446,18 @@ def writeSingleParquet(json_str):
         **(existing_meta or {})  # Merge with existing metadata, if any
     }
 
-    pq.write_table(combined_table, f"{args.output_file}_combined.parquet",
-        compression='GZIP',
+    # Rebuild the table with the new schema that includes updated metadata
+    combined_table = combined_table.replace_schema_metadata(combined_meta)
+
+    start_time = time.time()
+    pq.write_table(combined_table, f"{args.output_file}.parquet",
+        compression='snappy',
         use_dictionary=True,
         write_statistics=True,
         )
+    end_time = time.time()
+    print(f"Writing parquet file: {end_time - start_time} seconds")
+
 
 # write out all chromatograms and spectra data
 writeSingleParquet(json_str)
