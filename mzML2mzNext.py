@@ -8,7 +8,7 @@ from pyopenms import *
 #TODO: use cv terms where appropriate
 #TODO: add example for each vendor
 #TODO: add example with ion mobility
-#TODO: add imaging example
+#TODO: add imaging MS example (e.g., additional collumns)
 #TODO: evaluate what meta data should go into json or in columns
 
 # Parse command line arguments
@@ -296,9 +296,14 @@ def fillMetaDate(exp):
             precursor.getKeys(precursor_keys)
             precursor_meta_values = {key.decode('utf-8'): precursor.getMetaValue(key) for key in precursor_keys}
             precursor_meta = {
+                'rt': precursor.getRT(),
+                'mz': precursor.getMZ(),
                 'charge': precursor.getCharge(),
                 'intensity': precursor.getIntensity(),
-                'mz': precursor.getMZ(),
+                'selected_ion_mz': precursor.getMZ(),
+                'selected_ion_charge': precursor.getCharge() if precursor.getCharge() != 0 else None,
+                'selected_ion_intensity': precursor.getIntensity() if precursor.getIntensity() != 0 else None,
+                'isolation_window_target': precursor.getMZ(),
                 'isolation_window_lower_offset': precursor.getIsolationWindowLowerOffset(),
                 'isolation_window_upper_offset': precursor.getIsolationWindowUpperOffset(),
                 'activation_methods': [str(method) for method in precursor.getActivationMethods()],
@@ -358,50 +363,28 @@ def writeSingleParquet(json_str):
         # Extract spectrum-level metadata
         spectrum_id = spectrum.getNativeID()
         ms_level = spectrum.getMSLevel()
-        scan_start_time = spectrum.getRT()
+        rt = spectrum.getRT()
+        
         ion_mobility = None
         if spectrum.getDriftTime() != 0:
             ion_mobility = spectrum.getDriftTime()
-        ion_injection_time = None
-        if spectrum.metaValueExists("IONINJECTIONTIME"):
-            ion_injection_time = float(spectrum.getMetaValue("IONINJECTIONTIME"))
-        
-        # Precursors
-        precursors = []
-        for precursor in spectrum.getPrecursors():
-            precursor_meta = {
-                'selected_ion_mz': precursor.getMZ(),
-                'selected_ion_charge': precursor.getCharge() if precursor.getCharge() != 0 else None,
-                'selected_ion_intensity': precursor.getIntensity() if precursor.getIntensity() != 0 else None,
-                'isolation_window_target': precursor.getMZ(),
-                'isolation_window_lower': precursor.getIsolationWindowLowerOffset(),
-                'isolation_window_upper': precursor.getIsolationWindowUpperOffset(),
-                'spectrum_ref': None,
-            }
-            precursors.append(precursor_meta)
         
         # mz and intensity arrays
         mz_array = spectrum.get_peaks()[0]
         intensity_array = spectrum.get_peaks()[1]
         
+        precursors = spectrum.getPrecursors()
+
         # Iterate over peaks to create long-format data
         for mz, intensity in zip(mz_array, intensity_array):
             spectra_data.append({
                 'id': spectrum_id,
                 'data_type': 'spectrum',  # New field to distinguish data type
                 'ms_level': ms_level,
-                'scan_start_time': scan_start_time,
-                'ion_injection_time': ion_injection_time,
-                'selected_ion_mz': precursors[0]['selected_ion_mz'] if precursors else None,
-                'selected_ion_charge': precursors[0]['selected_ion_charge'] if precursors else None,
-                'selected_ion_intensity': precursors[0]['selected_ion_intensity'] if precursors else None,
-                'isolation_window_target': precursors[0]['isolation_window_target'] if precursors else None,
-                'isolation_window_lower': precursors[0]['isolation_window_lower'] if precursors else None,
-                'isolation_window_upper': precursors[0]['isolation_window_upper'] if precursors else None,
-                'spectrum_ref': precursors[0]['spectrum_ref'] if precursors else None,
-                'mz_or_time': mz,  # Renamed field to accommodate both mz and time
+                'rt': rt, # scan start time
+                'mz': mz, 
                 'intensity': intensity,
-                'ion_mobility': ion_mobility,
+                'ion_mobility': ion_mobility,    
             })
 
     # Process chromatograms
@@ -419,39 +402,29 @@ def writeSingleParquet(json_str):
                 'id': chrom_id,
                 'data_type': 'chromatogram',  # Distinguish chromatogram data
                 'ms_level': None,  # Chromatograms don't have MS level
-                'scan_start_time': None,
-                'ion_injection_time': None,
-                'selected_ion_mz': precursor.getMZ() if precursor else None,
-                'selected_ion_charge': None,
-                'selected_ion_intensity': None,
-                'isolation_window_target': None,
-                'isolation_window_lower': None,
-                'isolation_window_upper': None,
-                'spectrum_ref': None,
-                'mz_or_time': time,  # Using the same field for time
+                'rt': time,
+                'mz': product.getMZ(),
                 'intensity': intensity,
                 'ion_mobility': None,
             })
 
+    # Observation: having variable mz's could model a data_type 'mass trace'
     # Convert to DataFrame
     combined_df = pd.DataFrame(spectra_data)
 
     # Optimize data types
-    combined_df['data_type'] = combined_df['data_type'].astype('category')
     combined_df['id'] = combined_df['id'].astype('category')
+    combined_df['data_type'] = combined_df['data_type'].astype('category')
     combined_df['ms_level'] = combined_df['ms_level'].astype('Int8')  # nullable integer
-    combined_df['scan_start_time'] = combined_df['scan_start_time'].astype('float32')
-    combined_df['ion_injection_time'] = combined_df['ion_injection_time'].astype('float32')
-    combined_df['selected_ion_mz'] = combined_df['selected_ion_mz'].astype('float32')
-    combined_df['selected_ion_charge'] = combined_df['selected_ion_charge'].astype('float32')
-    combined_df['selected_ion_intensity'] = combined_df['selected_ion_intensity'].astype('float32')
-    combined_df['isolation_window_target'] = combined_df['isolation_window_target'].astype('float32')
-    combined_df['isolation_window_lower'] = combined_df['isolation_window_lower'].astype('float32')
-    combined_df['isolation_window_upper'] = combined_df['isolation_window_upper'].astype('float32')
-    combined_df['mz_or_time'] = combined_df['mz_or_time'].astype('float32')
+#    combined_df['ion_injection_time'] = combined_df['ion_injection_time'].astype('float32')
+#    combined_df['selected_ion_mz'] = combined_df['selected_ion_mz'].astype('float32')
+#    combined_df['selected_ion_charge'] = combined_df['selected_ion_charge'].astype('float32')
+#    combined_df['selected_ion_intensity'] = combined_df['selected_ion_intensity'].astype('float32')
+    combined_df['rt'] = combined_df['rt'].astype('float32')
+    combined_df['mz'] = combined_df['mz'].astype('float32')
     combined_df['intensity'] = combined_df['intensity'].astype('float32')
     combined_df['ion_mobility'] = combined_df['ion_mobility'].astype('float32')
-    combined_df['spectrum_ref'] = combined_df['spectrum_ref'].astype('category')
+ #   combined_df['spectrum_ref'] = combined_df['spectrum_ref'].astype('category')
 
     # Write combined data to single Parquet file
     combined_table = pa.Table.from_pandas(combined_df)
@@ -470,129 +443,4 @@ def writeSingleParquet(json_str):
         )
 
 # write out all chromatograms and spectra data
-def writeMultipleParquet(json_str):
-    # Create a list to hold spectrum data for the DataFrame
-    spectra_data = []
-
-    # Iterate over all spectra
-    for spectrum in exp.getSpectra():
-        # Extract spectrum-level metadata
-        spectrum_id = spectrum.getNativeID()
-        ms_level = spectrum.getMSLevel()
-        # centroid = spectrum.getType()  TODO: determine centroided or profile from meta data (see other OpenMS code)
-        scan_start_time = spectrum.getRT()
-        # Check for inverse ion mobility (e.g., for TIMS data)
-        ion_mobility = None
-        if spectrum.getDriftTime() != 0:
-            ion_mobility = spectrum.getDriftTime()
-        # Ion injection time (assumed to be stored in meta values)
-        ion_injection_time = None
-        if spectrum.metaValueExists("IONINJECTIONTIME"):
-            ion_injection_time = float(spectrum.getMetaValue("IONINJECTIONTIME"))
-        # Precursors
-        precursors = []
-        for precursor in spectrum.getPrecursors():
-            precursor_meta = {
-                'selected_ion_mz': precursor.getMZ(),
-                'selected_ion_charge': precursor.getCharge() if precursor.getCharge() != 0 else None,
-                'selected_ion_intensity': precursor.getIntensity() if precursor.getIntensity() != 0 else None,
-                'isolation_window_target': precursor.getMZ(),
-                'isolation_window_lower': precursor.getIsolationWindowLowerOffset(),
-                'isolation_window_upper': precursor.getIsolationWindowUpperOffset(),
-                'spectrum_ref': None,  # Placeholder, adjust if applicable
-            }
-            precursors.append(precursor_meta)
-        # mz and intensity arrays
-        mz_array = spectrum.get_peaks()[0]
-        intensity_array = spectrum.get_peaks()[1]
-        # Iterate over peaks to create long-format data
-        for mz, intensity in zip(mz_array, intensity_array):
-            spectra_data.append({
-                'id': spectrum_id,
-                'ms_level': ms_level,
-            #    'centroid': centroid, #TODO move into meta data?
-                'scan_start_time': scan_start_time,
-                'ion_injection_time': ion_injection_time,
-                'selected_ion_mz': precursors[0]['selected_ion_mz'] if precursors else None,
-                'selected_ion_charge': precursors[0]['selected_ion_charge'] if precursors else None,
-                'selected_ion_intensity': precursors[0]['selected_ion_intensity'] if precursors else None,
-                'isolation_window_target': precursors[0]['isolation_window_target'] if precursors else None,
-                'isolation_window_lower': precursors[0]['isolation_window_lower'] if precursors else None,
-                'isolation_window_upper': precursors[0]['isolation_window_upper'] if precursors else None,
-                'spectrum_ref': precursors[0]['spectrum_ref'] if precursors else None,
-                'mz': mz,
-                'intensity': intensity,
-                'ion_mobility': ion_mobility,
-                # CV params can be added if necessary
-            })
-
-    # Convert the spectra data to a DataFrame
-    spectra_df = pd.DataFrame(spectra_data)
-    # Optimize data types
-    spectra_df['ms_level'] = spectra_df['ms_level'].astype('int8')
-    #spectra_df['centroid'] = spectra_df['centroid'].astype('bool')
-    spectra_df['scan_start_time'] = spectra_df['scan_start_time'].astype('float32')
-    spectra_df['ion_mobility'] = spectra_df['ion_mobility'].astype('float32')
-    spectra_df['ion_injection_time'] = spectra_df['ion_injection_time'].astype('float32')
-    #spectra_df['total_ion_current'] = spectra_df['total_ion_current'].astype('float32')
-    spectra_df['selected_ion_mz'] = spectra_df['selected_ion_mz'].astype('float32')
-    spectra_df['selected_ion_charge'] = spectra_df['selected_ion_charge'].astype('float32')
-    spectra_df['selected_ion_intensity'] = spectra_df['selected_ion_intensity'].astype('float32')
-    spectra_df['isolation_window_target'] = spectra_df['isolation_window_target'].astype('float32')
-    spectra_df['isolation_window_lower'] = spectra_df['isolation_window_lower'].astype('float32')
-    spectra_df['isolation_window_upper'] = spectra_df['isolation_window_upper'].astype('float32')
-    spectra_df['mz'] = spectra_df['mz'].astype('float32')
-    spectra_df['intensity'] = spectra_df['intensity'].astype('float32')
-
-    # Convert categorical columns to 'category' dtype
-    spectra_df['id'] = spectra_df['id'].astype('category')
-    spectra_df['spectrum_ref'] = spectra_df['spectrum_ref'].astype('category')
-
-
-    # Write spectra data to Parquet file
-    spectra_table = pa.Table.from_pandas(spectra_df)
-    pq.write_table(spectra_table, f"{args.output_file}_spectra.parquet",
-        compression='gzip',
-        use_dictionary=True,
-        write_statistics=True)
-
-    # Now process chromatograms
-    chromatogram_data = []
-
-    for chromatogram in exp.getChromatograms():
-        # Extract chromatogram-level metadata
-        chrom_id = chromatogram.getNativeID()
-        # For chromatograms, we can extract the time-intensity pairs
-        time_array = chromatogram.get_peaks()[0]
-        intensity_array = chromatogram.get_peaks()[1]
-        # Iterate over peaks to create long-format data
-        for time, intensity in zip(time_array, intensity_array):
-            chromatogram_data.append({
-                'id': chrom_id,
-                'time': time,
-                'intensity': intensity,
-                # Additional metadata can be added here
-            })
-
-    # Convert the chromatogram data to a DataFrame
-    chromatogram_df = pd.DataFrame(chromatogram_data)
-    # Optimize data types
-    chromatogram_df['time'] = chromatogram_df['time'].astype('float32')
-    chromatogram_df['intensity'] = chromatogram_df['intensity'].astype('float32')
-    chromatogram_df['id'] = chromatogram_df['id'].astype('category')
-
-    # Write chromatogram data to Parquet file
-    chromatogram_table = pa.Table.from_pandas(chromatogram_df)
-    pq.write_table(chromatogram_table, f"{args.output_file}_chromatograms.parquet",
-        compression='snappy',
-        use_dictionary=True,
-        write_statistics=True)
-
-    # TODO: check how to reference from meta data to spectra
-
-    # Write metadata to JSON file
-    with open(f"{args.output_file}_metadata.json", "w") as f:
-        f.write(json_str)
-
 writeSingleParquet(json_str)
-writeMultipleParquet(json_str)
