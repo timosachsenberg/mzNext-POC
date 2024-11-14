@@ -9,6 +9,7 @@ from pyopenms import *
 #TODO: use cv terms where appropriate
 #TODO: add example for each vendor
 #TODO: add example with ion mobility
+#TODO: think if having other data types make sense (e.g., mass trace, mobilogram, IM frames)
 #TODO: add imaging MS example (e.g., additional collumns)
 #TODO: evaluate what meta data should go into json or in columns
 
