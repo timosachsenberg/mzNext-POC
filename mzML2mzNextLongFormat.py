@@ -4,7 +4,7 @@ import time
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from pyopenms import *
+from pyopenms import MSExperiment, MzMLFile, IonSource, MassAnalyzer, ChecksumType
 
 #TODO: use cv terms where appropriate
 #TODO: add example for each vendor
@@ -13,21 +13,7 @@ from pyopenms import *
 #TODO: add imaging MS example (e.g., additional collumns)
 #TODO: evaluate what meta data should go into json or in columns
 
-# Parse command line arguments
-parser = argparse.ArgumentParser(description='Convert mzML metadata to JSON')
-parser.add_argument('input_file', help='Input mzML file')
-parser.add_argument('-o', '--output_file', default='metadata.json', help='Output JSON file')
-args = parser.parse_args()
-
-# Load the mzML file
-start_time = time.time()
-exp = MSExperiment()
-MzMLFile().load(args.input_file, exp)  # Use filename from command line argument
-end_time = time.time()
-print(f"Load experiment from mzML: {end_time - start_time} seconds")
-
-
-def fillMetaDate(exp):
+def fillMetaData(exp):
     start_time = time.time()
 
     metadata = {}
@@ -520,6 +506,20 @@ def benchmark():
             sum_time += t1 - t0
         print(f"Average time to extract a random m/z (+-{mz_tol}),rt (+-{rt_tol}) range from MS{ms_level} spectra: {sum_time / 100.0} seconds")
 
-json_str = fillMetaDate(exp)
-write(json_str)
-benchmark()
+if __name__ == '__main__':
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Convert mzML metadata to JSON')
+    parser.add_argument('input_file', help='Input mzML file')
+    parser.add_argument('-o', '--output_file', default='metadata.json', help='Output JSON file')
+    args = parser.parse_args()
+
+    # Load the mzML file
+    start_time = time.time()
+    exp = MSExperiment()
+    MzMLFile().load(args.input_file, exp)  # Use filename from command line argument
+    end_time = time.time()
+    print(f"Load experiment from mzML: {end_time - start_time} seconds")
+
+    json_str = fillMetaData(exp)
+    write(json_str)
+    benchmark()

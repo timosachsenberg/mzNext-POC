@@ -5,7 +5,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pyarrow.compute as pc
-from pyopenms import *
+from pyopenms import MSExperiment, MzMLFile, IonSource, MassAnalyzer, ChecksumType
 import numpy as np
 
 #TODO: use cv terms where appropriate
@@ -15,18 +15,7 @@ import numpy as np
 #TODO: add imaging MS example (e.g., additional collumns)
 #TODO: evaluate what meta data should go into json or in columns
 
-# Parse command line arguments
-parser = argparse.ArgumentParser(description='Convert mzML metadata to JSON')
-parser.add_argument('input_file', help='Input mzML file')
-parser.add_argument('-o', '--output_file', default='metadata.json', help='Output JSON file')
-args = parser.parse_args()
 
-# Load the mzML file
-start_time = time.time()
-exp = MSExperiment()
-MzMLFile().load(args.input_file, exp)  # Use filename from command line argument
-end_time = time.time()
-print(f"Load experiment from mzML: {end_time - start_time} seconds")
 
 
 def fillMetaDate(exp):
@@ -495,6 +484,13 @@ def benchmark():
     
     print(f"Average time to access a random spectrum by native id: {sum_time / 100.0} seconds")
 
+    min_rt = spectra_lazy.select(pl.min('rt')).collect().to_numpy()[0][0]
+    max_rt = spectra_lazy.select(pl.max('rt')).collect().to_numpy()[0][0]
+    print(f"RT range: {min_rt} - {max_rt}")
+
+    min_mz = spectra_lazy.select(pl.col('mz_array').list.min().alias('min_mz')).select(pl.min('min_mz')).collect().to_numpy()[0][0]
+    max_mz = spectra_lazy.select(pl.col('mz_array').list.max().alias('max_mz')).select(pl.max('max_mz')).collect().to_numpy()[0][0]
+    print(f"m/z range: {min_mz} - {max_mz}")
     # Task 2: Extract random m/z ranges from MS1 and MS2 spectra
 
     # Run benchmarks for MS1 and MS2
@@ -505,29 +501,56 @@ def benchmark():
 
         for _ in range(100):
             # Generate random m/z and RT ranges
-            mz = np.random.uniform(200, 2000)
-            mz_tol = 0.1  
-            rt = np.random.uniform(100, 1100)
+            mz_tol = 0.1
+            mz = np.random.uniform(min_mz+mz_tol, max_mz-mz_tol)
             rt_tol = 60.0
+            rt = np.random.uniform(min_rt+rt_tol, max_rt-rt_tol)
 
             t0 = time.time()
             
-            # Filter spectra by RT range and MS level, then check m/z arrays
-            result = (spectra_lazy
-                .filter(
-                    (pl.col('ms_level') == ms_level) &
-                    pl.col('rt').is_between(rt - rt_tol, rt + rt_tol) &
-                    pl.col('mz_array')
-                    .list.eval(pl.element().is_between(mz - mz_tol, mz + mz_tol)).any() # this only checks if there are peaks at all
-                ).collect()  # TODO: for peak extraction we would need to extract the corresponding intensities
-            )
+            spec = spectra_lazy.filter((pl.col('ms_level') == ms_level) & pl.col('rt').is_between(rt - rt_tol, rt + rt_tol))
+            
+            # find indices of m/z values within the tolerance with binary search in the mz_array column (with polars)
+            mz_start = mz - mz_tol
+            mz_end = mz + mz_tol
+            mzrange = np.array([mz_start, mz_end])
 
+            pl.Array(pl.Float64,(2))
+            #print(f"m/z range: {mz_start} - {mz_end}")
+            #print(f"RT range: {rt - rt_tol} - {rt + rt_tol}")
+            spec = spec.with_columns(
+                pl.col('mz_array').list.eval(pl.Expr.search_sorted(pl.element(), mzrange, side='left'), parallel=True).alias('start_end_idx')
+                #pl.col('mz_array').list.len().alias('nr_peaks')
+            )
+            spec_non_empty = spec.filter(pl.col('start_end_idx').list.len() == 2)
+            
+            subspec = spec_non_empty.select(
+                pl.col('intensity_array').list.slice(
+                    pl.col('start_end_idx').list.get(0).cast(pl.UInt64),
+                    pl.col('start_end_idx').list.get(1).cast(pl.UInt64) + 1
+                )
+            ).collect()
+            #print(subspec)
             t1 = time.time()
             sum_time += t1 - t0
 
         print(f"Average time to extract a random m/z (+-{mz_tol}),rt (+-{rt_tol}) range from MS{ms_level} spectra: {sum_time / 100.0} seconds")
-        
 
-json_str = fillMetaDate(exp)
-write(json_str)
-benchmark()
+
+if __name__ == '__main__':
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Convert mzML metadata to JSON')
+    parser.add_argument('input_file', help='Input mzML file')
+    parser.add_argument('-o', '--output_file', default='metadata.json', help='Output JSON file')
+    args = parser.parse_args()
+
+    # Load the mzML file
+    start_time = time.time()
+    exp = MSExperiment()
+    MzMLFile().load(args.input_file, exp)  # Use filename from command line argument
+    end_time = time.time()
+    print(f"Load experiment from mzML: {end_time - start_time} seconds")
+
+    json_str = fillMetaDate(exp)
+    write(json_str)
+    benchmark()
