@@ -368,7 +368,7 @@ def fillMetaDate(exp):
     return json_str
 
 
-def writeParquet(json_str):
+def write(json_str):
     # Create lists to hold spectrum and chromatogram data separately
     spectra_data = []
     chromatogram_data = []
@@ -462,137 +462,72 @@ def writeParquet(json_str):
     end_time = time.time()
     print(f"Writing parquet files: {end_time - start_time} seconds")
 
-def benchmarkParquet():
+def benchmark():
     import numpy as np
-    import pyarrow.dataset as ds
+    import polars as pl
+    import time
 
-    # Load datasets
+    # Create lazy DataFrame from Parquet files
     start_time = time.time()
-    spectra_dataset = ds.dataset(f"{args.output_file}_spectra.parquet", format="parquet")
+    spectra_lazy = pl.scan_parquet(f"{args.output_file}_spectra.parquet")
+    #chromatogram_lazy = pl.scan_parquet(f"{args.output_file}_chromatograms.parquet")
     end_time = time.time()
-    print(f"Loading spectra parquet files: {end_time - start_time} seconds")
+    print(f"Creating lazy dataframes (no data loaded into memory): {end_time - start_time} seconds")
 
-    start_time = time.time()
-    chromatogram_dataset = ds.dataset(f"{args.output_file}_chromatograms.parquet", format="parquet")
-    end_time = time.time()
-    print(f"Loading chromatogram parquet files: {end_time - start_time} seconds")
+    # Task 1: Access 100 random spectra
+    
+    # Collect unique IDs
+    spectra_ids = spectra_lazy.select('id').unique().collect()['id'].to_list()
+    num_spectra = len(spectra_ids)
 
-    # Function to collect unique IDs
-    def get_unique_ids(filtered_dataset):
-        unique_ids = set()
-        for batch in filtered_dataset.to_batches(columns=['id']):
-            ids_in_batch = batch.column('id').to_pylist()
-            unique_ids.update(ids_in_batch)
-        return list(unique_ids)
-
-    # Get spectrum counts
-    all_spectra = spectra_dataset.to_table()
-    ms1_spectra = spectra_dataset.filter(ds.field('ms_level') == 1).to_table()
-    ms2_spectra = spectra_dataset.filter(ds.field('ms_level') == 2).to_table()
-
-    num_spectra = len(all_spectra)
-    num_ms1_spectra = len(ms1_spectra)
-    num_ms2_spectra = len(ms2_spectra)
-
-    # First Task: Access 100 random spectra
-    start_time = time.time()
+    sum_time = 0.0
     if num_spectra >= 100:
-        random_indices = np.random.choice(num_spectra, 100, replace=False)
-        selected_spectra = all_spectra.take(random_indices)
+        random_ids = np.random.choice(spectra_ids, 100, replace=False)
+        t0 = time.time()
+        result = (spectra_lazy
+            .filter(pl.col('data_type') == 'spectrum')
+            .filter(pl.col('id').is_in(random_ids))
+            .collect())
+        t1 = time.time()
+        sum_time += t1 - t0        
     else:
         print("Not enough spectra to perform the benchmark.")
-    end_time = time.time()
-    print(f"Accessing 100 random spectra: {end_time - start_time} seconds")
+    
+    print(f"Average time to access a random spectrum by native id: {sum_time / 100.0} seconds")
 
+    # Task 2: Extract random m/z ranges from MS1 and MS2 spectra
 
-    # Filter spectra by ms_level
-    ms1_spectra_table = all_spectra.filter(pc.equal(all_spectra['ms_level'], 1))
-    ms2_spectra_table = all_spectra.filter(pc.equal(all_spectra['ms_level'], 2))
+    # Run benchmarks for MS1 and MS2
+    for ms_level in [1, 2]:
 
-    # Get the retention time ranges for ms_level 1 and 2
-    def get_rt_range(spectra_table):
-        rt_array = spectra_table['rt'].to_pandas().values
-        return rt_array.min(), rt_array.max()
+        sum_time = 0.0
+        total_peaks = 0
 
-    ms1_min_rt, ms1_max_rt = get_rt_range(ms1_spectra_table) if len(ms1_spectra_table) > 0 else (0, 0)
-    ms2_min_rt, ms2_max_rt = get_rt_range(ms2_spectra_table) if len(ms2_spectra_table) > 0 else (0, 0)
+        for _ in range(100):
+            # Generate random m/z and RT ranges
+            mz = np.random.uniform(200, 2000)
+            mz_tol = 0.1  
+            rt = np.random.uniform(100, 1100)
+            rt_tol = 60.0
 
-    # Define m/z and rt range sizes
-    mz_range_size = 50.0  # Size of the m/z range
-    rt_range_size = 120.0  # Size of the rt range
-
-    # Generate 100 m/z ranges between 400 and 1400
-    mz_start_values = np.random.uniform(400, 1400 - mz_range_size, 100)
-    mz_ranges = [(start, start + mz_range_size) for start in mz_start_values]
-
-    # Function to perform the extraction and benchmarking
-    def extract_peaks(spectra_table, min_rt, max_rt, ms_level_label):
-        if len(spectra_table) == 0:
-            print(f"No MS{ms_level_label} spectra available for benchmarking.")
-            return
-
-        # Generate 100 rt ranges randomly within the available rt range
-        rt_start_values = np.random.uniform(min_rt, max_rt - rt_range_size, 100)
-        rt_ranges = [(start, start + rt_range_size) for start in rt_start_values]
-
-        # Start benchmarking
-        start_time = time.time()
-
-        total_peaks_extracted = 0  # To keep track of the number of peaks extracted
-
-        for i, (mz_range, rt_range) in enumerate(zip(mz_ranges, rt_ranges)):
-            mz_min, mz_max = mz_range
-            rt_min, rt_max = rt_range
-
-            # Filter spectra that fall into the rt range
-            spectra_in_rt_range = spectra_table.filter(
-                pc.and_(
-                    pc.greater_equal(spectra_table['rt'], rt_min),
-                    pc.less_equal(spectra_table['rt'], rt_max)
-                )
+            t0 = time.time()
+            
+            # Filter spectra by RT range and MS level, then check m/z arrays
+            result = (spectra_lazy
+                .filter(
+                    (pl.col('ms_level') == ms_level) &
+                    pl.col('rt').is_between(rt - rt_tol, rt + rt_tol) &
+                    pl.col('mz_array')
+                    .list.eval(pl.element().is_between(mz - mz_tol, mz + mz_tol)).any() # this only checks if there are peaks at all
+                ).collect()  # TODO: for peak extraction we would need to extract the corresponding intensities
             )
 
-            # Skip if no spectra in this rt range
-            if len(spectra_in_rt_range) == 0:
-                continue
+            t1 = time.time()
+            sum_time += t1 - t0
 
-            # Convert to pandas DataFrame for easier handling
-            spectra_df = spectra_in_rt_range.to_pandas()
-
-            # Iterate over spectra in the rt range
-            for idx, spectrum in spectra_df.iterrows():
-                mz_array = np.array(spectrum['mz_array'])
-                intensity_array = np.array(spectrum['intensity_array'])
-
-                if len(mz_array) == 0:
-                    continue
-
-                # Filter peaks that fall into the m/z range
-                mz_mask = (mz_array >= mz_min) & (mz_array <= mz_max)
-
-                selected_mz = mz_array[mz_mask]
-                selected_intensity = intensity_array[mz_mask]
-
-                total_peaks_extracted += len(selected_mz)
-
-                # You can store or process the selected peaks as needed
-                # For benchmarking, we'll just count them
-
-            # Optional: Print progress every 10 iterations
-            if (i + 1) % 10 == 0:
-                print(f"MS{ms_level_label}: Processed {i + 1}/100 ranges...")
-
-        end_time = time.time()
-        print(f"MS{ms_level_label}: Extracted a total of {total_peaks_extracted} peaks from the m/z and rt ranges.")
-        print(f"MS{ms_level_label}: Total time for extracting peaks from m/z and rt ranges: {end_time - start_time} seconds\n")
-
-    # Perform extraction and benchmarking for MS1 spectra
-    extract_peaks(ms1_spectra_table, ms1_min_rt, ms1_max_rt, ms_level_label=1)
-
-    # Perform extraction and benchmarking for MS2 spectra
-    extract_peaks(ms2_spectra_table, ms2_min_rt, ms2_max_rt, ms_level_label=2)
-
+        print(f"Average time to extract a random m/z (+-{mz_tol}),rt (+-{rt_tol}) range from MS{ms_level} spectra: {sum_time / 100.0} seconds")
+        
 
 json_str = fillMetaDate(exp)
-writeParquet(json_str)
-benchmarkParquet()
+write(json_str)
+benchmark()
