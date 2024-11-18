@@ -515,7 +515,6 @@ def benchmark():
             mz_end = mz + mz_tol
             mzrange = np.array([mz_start, mz_end])
 
-            pl.Array(pl.Float64,(2))
             #print(f"m/z range: {mz_start} - {mz_end}")
             #print(f"RT range: {rt - rt_tol} - {rt + rt_tol}")
             spec = spec.with_columns(
