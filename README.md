@@ -1,18 +1,14 @@
 Currently just a playground to quickly test a few ideas regarding a potential parquet format for MS data.
 test files are available at the release
 
-Observations:
-1. long format is compressed a bit larger than the conpressed mzML. Random access/chrom. extraction performance is super slow (up to 200s for extraction)
-2. try one row per spectrum / with data array (e.g. m/z) in cell
+Long format:
 ```
-Load experiment from mzML: 6.359102725982666 seconds
-Create json representaiton of meta data: 2.91546368598938 seconds
-Writing parquet files: 24.772038221359253 seconds
-Loading spectra parquet files: 3.0158519744873047 seconds
-Loading chromatogram parquet files: 2.946080446243286 seconds
-Accessing 100 random spectra: 0.004001140594482422 seconds
-MS1: Extracted a total of 1250295 peaks from the m/z and rt ranges.
-MS1: Total time for extracting peaks from m/z and rt ranges: 3.1221811771392822 seconds
-MS2: Extracted a total of 1417186 peaks from the m/z and rt ranges.
-MS2: Total time for extracting peaks from m/z and rt ranges: 4.18139123916626 seconds
+Load experiment from mzML: 5.796112775802612 seconds
+Create json representation of meta data: 3.2389822006225586 seconds
+Writing parquet file: 24.799195051193237 seconds
+Loading parquet file into memory: 7.5644850730896 seconds
+Creating lazy dataframe (no data loaded into memory): 0.0009696483612060547 seconds
+Average time to access a random spectrum: 0.0037169885635375977 seconds
+Average time to extract a random m/z (+-0.1),rt (+-60.0) range from MS1 spectra: 0.058548598289489745 seconds
+Average time to extract a random m/z (+-0.1),rt (+-60.0) range from MS2 spectra: 0.05765039205551147 seconds
 ```
