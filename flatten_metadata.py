@@ -20,7 +20,7 @@ TEXT_SUFFIX = '#text'
 TAG_INDEX_RE = re.compile(r"^(.*)\[(\d+)\]$")
 # Default mzML namespace (adjust if your flattening preserved others)
 DEFAULT_MZML_NAMESPACE = "http://psi.hupo.org/ms/mzml"
-NAMESPACE_PREFIX = "dx" # The prefix often used for the mzML namespace
+NAMESPACE_PREFIX = "" # The prefix used for the mzML namespace
 
 
 # --- Helper Functions ---
