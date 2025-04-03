@@ -3,12 +3,16 @@ test files are available at the release
 
 Long format:
 ```
-Load experiment from mzML: 5.796112775802612 seconds
-Create json representation of meta data: 3.2389822006225586 seconds
-Writing parquet file: 24.799195051193237 seconds
-Loading parquet file into memory: 7.5644850730896 seconds
-Creating lazy dataframe (no data loaded into memory): 0.0009696483612060547 seconds
-Average time to access a random spectrum: 0.0037169885635375977 seconds
-Average time to extract a random m/z (+-0.1),rt (+-60.0) range from MS1 spectra: 0.058548598289489745 seconds
-Average time to extract a random m/z (+-0.1),rt (+-60.0) range from MS2 spectra: 0.05765039205551147 seconds
+python mzML2mzNextLongFormat.py /mnt/d/Tutorials/Example_Data/ProteomicsLFQ/UPS1_50000amol_R1.mzML 
+Load experiment from mzML: 38.55868220329285 seconds
+Create json representaiton of meta data: 2.45767879486084 seconds
+Writing parquet file: 4.293434143066406 seconds
+Loading parquet file into memory: 3.498243570327759 seconds
+Creating lazy dataframe (no data loaded into memory): 0.003572702407836914 seconds
+Average time to access a random spectrum by native id: 0.0038401222229003905 seconds
+Average time to extract a random m/z (+-0.1),rt (+-60.0) range from MS1 spectra: 0.38623351335525513 seconds
+Average time to extract a random m/z (+-0.1),rt (+-60.0) range from MS2 spectra: 0.3775592088699341 seconds
+
+609628424 Mar 19 17:40 metadata.json.parquet
+767043386 Aug 20  2021 /mnt/d/Tutorials/Example_Data/ProteomicsLFQ/UPS1_50000amol_R1.mzML
 ```
